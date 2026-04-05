@@ -66,11 +66,6 @@ h1 { font-size: 20px; font-weight: 500; margin-bottom: 0.25rem; }
 .op-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
 .op-name { font-size: 14px; font-weight: 500; flex: 1; }
 .op-desc { font-size: 12px; color: var(--text2); }
-.remove-btn {
-  font-size: 12px; color: var(--bad); cursor: pointer;
-  border: none; background: none; padding: 2px 6px; border-radius: 4px;
-}
-.remove-btn:hover { background: rgba(163,45,45,0.08); }
 .toggles { display: flex; flex-wrap: wrap; gap: 10px; }
 .toggle-label {
   font-size: 12px; color: var(--text2);
@@ -217,19 +212,6 @@ select {
   </div>
 
   <div class="add-row">
-    <div class="col">
-      <label for="unit-select">Add operator</label>
-      <select id="unit-select">
-        <option value="haruka">Haruka</option>
-        <option value="warfarin">Warfarin</option>
-        <option value="mon3tr">Mon3tr</option>
-        <option value="rose">Rose Salt</option>
-        <option value="nearl">Nearl</option>
-        <option value="vendela">Vendela</option>
-        <option value="lumen">Lumen</option>
-      </select>
-    </div>
-    <button class="btn primary" onclick="addUnit()">Add to squad</button>
     <button class="btn run" onclick="runSim()">Run simulation</button>
   </div>
 </div>
@@ -269,7 +251,7 @@ select {
   <div class="legend">
     <span><span class="swatch" style="background:#185fa5;height:2px;"></span>Surtr HP</span>
     <span><span class="swatch" style="background:#a32d2d;height:2px;"></span>Drain HP/s</span>
-    <span><span class="swatch" style="background:#0f6e56;height:2px;"></span>Heal HP/s (1s rolling avg)</span>
+    <span><span class="swatch" style="background:#0f6e56;height:2px;"></span>Heal HP/s (6s rolling avg)</span>
   </div>
   <div class="log" id="sim-log"></div>
 </div>
@@ -330,8 +312,7 @@ const OPERATORS = {
   },
   warfarin: {
     label: "Warfarin", short: "WAR",
-    desc: "Single-target medic",
-    hasWfMastery: true,
+    desc: "Single-target medic · S1 M3",
     skills: [
       { key: "warfarin_s1",   label: "S1 – Emergency Triage (AFK)" },
       { key: "warfarin_base", label: "No skill" },
@@ -346,7 +327,7 @@ const OPERATORS = {
       { key: "mon3tr_s2",   label: "S2 – Stratagem Overload (manual)" },
       { key: "mon3tr_base", label: "No skill" },
     ],
-    defaultSkill: "mon3tr_s2",
+    defaultSkill: "mon3tr_base",
   },
   rose: {
     label: "Rose Salt", short: "RSE",
@@ -508,31 +489,10 @@ function deriveGridToggles() {
 function initToggles(unit) {
   const op = OPERATORS[unit.opKey];
   const t  = unit.toggles;
-  if (op.hasWfMastery)   t['wf-m3']      = t['wf-m3']      ?? false;
   if (op.hasRoseMastery) t['rose-m3']    = t['rose-m3']    ?? false;
   if (op.hasWindup)      t['precharged'] = t['precharged'] ?? false;
 }
 
-function addUnit() {
-  const opKey = document.getElementById('unit-select').value;
-  if (activeUnits.some(u => u.opKey === opKey)) return;
-  const op   = OPERATORS[opKey];
-  const unit = { opKey, skillKey: op.defaultSkill, id: ++uidCounter, toggles: {} };
-  initToggles(unit);
-  activeUnits.push(unit);
-  renderRoster();
-  renderBench();
-}
-
-function removeUnit(id) {
-  // Remove from grid first
-  undeployToken(id);
-  if (OPERATORS[activeUnits.find(u=>u.id===id)?.opKey]?.isMon3tr) undeployToken('reconstruct');
-  activeUnits = activeUnits.filter(u => u.id !== id);
-  renderRoster();
-  renderBench();
-  renderGrid();
-}
 
 function setSkill(id, skillKey) {
   const unit = activeUnits.find(u => u.id === id);
@@ -561,10 +521,6 @@ function renderRoster() {
     }
   }
 
-  const presentOps = new Set(activeUnits.map(u => u.opKey));
-  const sel = document.getElementById('unit-select');
-  for (const opt of sel.options) opt.disabled = presentOps.has(opt.value);
-
   const el = document.getElementById('healer-list');
   if (!activeUnits.length) {
     el.innerHTML = '<p style="font-size:13px;color:var(--text2);margin-bottom:8px;">No additional operators added yet.</p>';
@@ -589,8 +545,6 @@ function renderRoster() {
     const rows = [skillSel];
     if (op.hasWindup && u.skillKey !== (u.opKey==='haruka' ? 'haruka_base' : 'lumen_base'))
       rows.push(tog(u, 'precharged', 'Skill pre-charged before Surtr deploys'));
-    if (op.hasWfMastery && u.skillKey === 'warfarin_s1')
-      rows.push(tog(u, 'wf-m3', 'S1 at M3 (25% max HP instead of 19%)'));
     if (op.hasRoseMastery && u.skillKey === 'rose_s1')
       rows.push(tog(u, 'rose-m3', 'S1 at M3 (8s charge, 190% ATK, up to 2 charges)'));
 
@@ -603,7 +557,6 @@ function renderRoster() {
           <span class="op-name">${op.label}</span>
           <span class="op-desc">${op.desc}</span>
           <span style="font-size:11px;color:var(--text3);">${posLabel}</span>
-          <button class="remove-btn" onclick="removeUnit(${id})">remove</button>
         </div>
         <div class="toggles">${rows.join('')}</div>
       </div>`;
@@ -690,7 +643,7 @@ function placeTokenEl(tokenId, pos) {
   }
   div.style.background = color;
 
-  const orderIdx = deployOrder.indexOf(tokenId);
+  const orderIdx = deployOrder.indexOf(String(tokenId));
   const orderLabel = orderIdx >= 0 ? `<div class="deploy-order-badge">${orderIdx + 1}</div>` : '';
   div.innerHTML = `${orderLabel}<span>${label}</span>`;
 
@@ -803,7 +756,20 @@ function onCellDrop(e) {
 }
 
 // Allow dropping tokens BACK onto the bench area to undeploy
+function populateSquad() {
+  for (const opKey of Object.keys(OPERATORS)) {
+    if (activeUnits.some(u => u.opKey === opKey)) continue;
+    const op   = OPERATORS[opKey];
+    const unit = { opKey, skillKey: op.defaultSkill, id: ++uidCounter, toggles: {} };
+    initToggles(unit);
+    activeUnits.push(unit);
+  }
+  renderRoster();
+  renderBench();
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+  populateSquad();
   buildGrid();
   renderGrid();
   renderBench();
@@ -839,7 +805,7 @@ function clearGrid() {
 // ═══════════════════════════════════════════════════════════
 
 // Each simulated operator has:
-// { opKey, skillKey, id, baseAtk, baseInterval, buffs[], attackTimer,
+// { opKey, skillKey, id, baseAtk, baseInterval, buffs[], attackCooldown,
 //   spTimer, sp, spMax, spCost, ... operator-specific fields }
 
 function buildSimOperators() {
@@ -859,7 +825,7 @@ function buildSimOperators() {
         mods: [{ stat: 'atk', kind: 'ratio', value: atkBonus }],
         expiry: { condition: 'never' } }),
     ],
-    attackTimer: 0,
+    attackCooldown: 0,
     maxHP: 7680,
     hp: 7680,
     role: 'surtr',
@@ -889,7 +855,7 @@ function buildSimOperators() {
       id: 'reconstruct', opKey: 'reconstruct', label: 'Reconstruction',
       maxHP: 5000, hp: 5000,
       baseAtk: 0, baseInterval: Infinity,
-      buffs: [], attackTimer: 0,
+      buffs: [], attackCooldown: 0,
       role: 'reconstruct',
       drainPerS: 80,
     });
@@ -901,12 +867,11 @@ function buildSimOperators() {
 function buildBaseSimOp(u, op, sk, gd) {
   const base = {
     id: u.id, opKey: u.opKey, label: op.label,
-    buffs: [],
-    attackTimer: 0,
+    buffs: [], attackCooldown: 0,
     procCount: 0, lastEvents: [],
   };
 
-  // Reconstruction aura: if in range, apply +15% ATK multiplier buff
+  // Reconstruction aura: +15% ATK multiplier if in range
   if (gd.atkAura) {
     base.buffs.push(makeBuff({ type: 'reconstruct_aura', source: 'reconstruct',
       mods: [{ stat: 'atk', kind: 'mult', value: 0.15 }],
@@ -916,35 +881,34 @@ function buildBaseSimOp(u, op, sk, gd) {
   if (u.opKey === 'haruka') {
     const precharged = sk === 'haruka_s2' && chk(u.id, 'precharged');
     base.baseAtk = 559; base.baseInterval = 1.6;
-    base.role = 'haruka';
-    base.healMult = 0.75; // Abjurer
-    // Phase system: 0=pre-1st-cast,1=1st-cast(no bonus),2=pre-2nd-cast,3=S2-permanent
-    base.phase = precharged ? 3 : (sk === 'haruka_s2' ? 0 : 1); // haruka_base stays phase 1 (no S2 ever)
-    base.phaseTimer = 0;
-    base.PHASE_DUR  = [19, 26, 19, Infinity];
-    if (sk === 'haruka_s2' && precharged) {
+    base.role = 'haruka'; base.healMult = 0.75;
+    base.hasS2 = (sk === 'haruka_s2');
+    // SP system: cost 17, max 17, 1 SP per 30-tick loop
+    base.sp = precharged ? 17 : 0; base.spMax = 17; base.spCost = 17;
+    base.spTimer = 0; // 30-tick loop counter
+    // Cast state: 0=not yet cast, 1=1st cast active (26s=780 ticks), 2=permanent
+    base.castState = precharged ? 2 : 0;
+    base.castTimer = 0; // ticks remaining in 1st cast
+    base.castsDone = precharged ? 2 : 0;
+    if (precharged) {
       base.buffs.push(makeBuff({ type: 'haruka_s2', source: 'haruka',
         mods: [{ stat: 'atk', kind: 'ratio', value: 0.40 }],
-        expiry: { condition: 'skill_inactive', skillKey: 'haruka_s2_phase3' } }));
+        expiry: { condition: 'never' } }));
     }
-    base.s2Active = precharged;
 
   } else if (u.opKey === 'warfarin') {
     base.baseAtk = 589; base.baseInterval = 2.85;
     base.role = 'warfarin';
-    const m3 = chk(u.id, 'wf-m3');
     base.sp = 0; base.spMax = 12; base.spCost = 4;
     base.s1Active = (sk === 'warfarin_s1');
-    base.s1Pct = m3 ? 0.25 : 0.19;
-    // Below-50% module: +15% heal mult (applied per attack)
-    base.modThreshold = 0.5; base.modMult = 1.15;
-    base.procCount = 0; base.totalBonusHP = 0;
+    base.s1Pct = 0.25;
+    base.modMult = 1.15; // module: +15% when target below 50%
+    base.totalBonusHP = 0;
 
   } else if (u.opKey === 'mon3tr') {
     const isS2 = (sk === 'mon3tr_s2');
     base.baseAtk = 522; base.baseInterval = 2.85;
     base.role = 'mon3tr'; base.isS2 = isS2;
-    // Mon3tr always in own aura if Reconstruction is adjacent to her
     const mon3trPos = gridPlacements[u.id];
     const rPos = reconstructPos();
     const ownAura = mon3trPos && rPos && isAdjacent(mon3trPos, rPos);
@@ -953,49 +917,45 @@ function buildBaseSimOp(u, op, sk, gd) {
         mods: [{ stat: 'atk', kind: 'mult', value: 0.15 }],
         expiry: { condition: 'never' } }));
     }
-    // Permanent self-ASPD from self-heal: added dynamically each attack
-    base.sp = 9; base.spMax = 15; base.spCost = 15; // starts at 9 SP
-    base.s2Active = false; base.s2Timer = 0; base.s2Duration = 30;
-    base.echoQueue = []; // { ticksRemaining, healAmt }
-    base.procCount = 0;
+    base.sp = 9; base.spMax = 15; base.spCost = 15;
+    base.s2Active = false; base.s2Timer = 0; // ticks remaining in S2
 
   } else if (u.opKey === 'rose') {
     const m3 = chk(u.id, 'rose-m3');
-    base.baseAtk = 335 * 0.95; base.baseInterval = 2.85; // talent ATK debuff baked in
+    base.baseAtk = 335 * 0.95; base.baseInterval = 2.85;
     base.role = 'rose';
     base.hasS1 = (sk === 'rose_s1');
-    base.healReceivedBuff = 1.17; // talent: allies receive 17% more healing
     base.sp = 0; base.spCost = m3 ? 8 : 10; base.spMax = m3 ? 16 : 10;
+    base.spTimer = 0;
     base.s1Pct = m3 ? 1.90 : 1.65;
-    base.procCount = 0;
 
   } else if (u.opKey === 'nearl') {
-    base.baseAtk = 467; base.baseInterval = Infinity; // normal attacks don't heal
+    base.baseAtk = 467; base.baseInterval = Infinity;
     base.role = 'nearl';
     base.s1Active = (sk === 'nearl_s1') && gd.nearlAdj;
     base.sp = 0; base.spMax = 10; base.spCost = 5;
-    base.procCount = 0;
+    base.spTimer = 0;
 
   } else if (u.opKey === 'vendela') {
     base.role = 'vendela';
     base.baseAtk = 0; base.baseInterval = Infinity;
-    // Passive only — no active heals
 
   } else if (u.opKey === 'lumen') {
     base.baseAtk = 579; base.baseInterval = 2.85;
     base.role = 'lumen';
-    const hasS3     = (sk === 'lumen_s3');
+    const hasS3 = (sk === 'lumen_s3');
     const precharged = hasS3 && chk(u.id, 'precharged');
-    base.hasS3      = hasS3;
-    base.windupTicks = (hasS3 && !precharged) ? 50 * TICKS_PER_S : 0;
-    base.s3Active   = precharged;
+    base.hasS3 = hasS3;
+    base.sp = precharged ? 50 : 0; base.spMax = 50; base.spCost = 50;
+    base.spTimer = 0;
+    base.s3Active = precharged;
     if (precharged) {
       base.buffs.push(makeBuff({ type: 'lumen_s3', source: 'lumen',
         mods: [
           { stat: 'atk',  kind: 'ratio', value: 0.55 },
           { stat: 'aspd', kind: 'ratio', value: 30   },
         ],
-        expiry: { condition: 'skill_inactive', skillKey: 'lumen_s3' } }));
+        expiry: { condition: 'never' } }));
     }
 
   } else {
@@ -1011,6 +971,7 @@ function buildBaseSimOp(u, op, sk, gd) {
 function getHealMultiplier() {
   let mult = 1.0;
   for (const u of activeUnits) {
+    if (!gridPlacements[u.id]) continue;
     if (u.opKey === 'nearl')   mult *= 1.10;
     if (u.opKey === 'vendela') mult *= 1.20;
   }
@@ -1018,150 +979,65 @@ function getHealMultiplier() {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  MON3TR BOUNCE CHAIN
-//  Returns array of { targetId, healAmt, tickDelay } queued heals.
-//  tickDelay is number of ticks after the Mon3tr attack before the heal lands.
+//  MON3TR CHAIN RESOLUTION (inline, same tick)
+//  Fires chain bounces as "summon attacks" during step 2/6.
+//  Returns total heal to Surtr from all bounces.
+//  Grants ASPD buffs to all targets hit.
 // ═══════════════════════════════════════════════════════════
-function resolveMon3trChain(mon3trSim, simOps, s2Active, healMult) {
-  const heals = []; // { targetId, healAmt, tickDelay, grantASPD, aspdStrength }
-  const healed = new Set();
-  const stats  = resolveStats({ atk: mon3trSim.baseAtk, aspd: 100 }, mon3trSim.buffs, mon3trSim.baseInterval);
-  const rawAtk = stats.atk;
+function fireChain(mon3trOp, simOps, s2Active, healMult, startPos, bouncesLeft, excludeIds, pendingHeals, tick) {
+  if (bouncesLeft <= 0 || !startPos) return;
 
-  // Helper: pick best bounce target adjacent to a position, excluding healed set
-  function pickBounce(fromPos, excludeIds) {
-    if (!fromPos) return null;
-    const adj = adjacent8(fromPos);
-    const candidates = [];
-    for (const p of adj) {
-      for (const op of simOps) {
-        const opPos = op.id === 'reconstruct' ? reconstructPos()
-                    : op.id === 'surtr'       ? surtrPos()
-                    : gridPlacements[op.id];
-        if (!opPos) continue;
-        if (opPos.row === p.row && opPos.col === p.col && !excludeIds.has(op.id)) {
-          candidates.push(op);
-        }
-      }
+  // Pick best adjacent target not yet healed in this chain
+  const adj = adjacent8(startPos);
+  const candidates = [];
+  for (const p of adj) {
+    for (const op of simOps) {
+      const opPos = op.id === 'reconstruct' ? reconstructPos()
+                  : op.id === 'surtr'       ? surtrPos()
+                  : gridPlacements[op.id];
+      if (!opPos || opPos.row !== p.row || opPos.col !== p.col) continue;
+      if (excludeIds.has(op.id)) continue;
+      // Chains can target full-HP allies; only Mon3tr's initial attack requires below 100%
+      candidates.push(op);
     }
-    if (!candidates.length) return null;
-    // Sort: lowest HP%, then most recently deployed (highest deployOrder index)
-    candidates.sort((a, b) => {
-      const hpA = a.hp / a.maxHP, hpB = b.hp / b.maxHP;
-      if (Math.abs(hpA - hpB) > 0.001) return hpA - hpB;
-      // Tiebreak: most recently deployed
-      const iA = deployOrder.indexOf(String(a.id)), iB = deployOrder.indexOf(String(b.id));
-      return iB - iA;
-    });
-    return candidates[0];
   }
+  if (!candidates.length) return;
 
-  // Primary target: Surtr (must be in Mon3tr's attack range — assumed for now)
-  const surtr = simOps.find(o => o.id === 'surtr');
-  if (!surtr) return heals;
+  // Sort: lowest %HP first, tiebreak by most recently deployed
+  candidates.sort((a, b) => {
+    const hpA = a.hp / a.maxHP, hpB = b.hp / b.maxHP;
+    if (Math.abs(hpA - hpB) > 0.001) return hpA - hpB;
+    const iA = deployOrder.indexOf(String(a.id));
+    const iB = deployOrder.indexOf(String(b.id));
+    return iB - iA;
+  });
 
-  const surtrHeal = rawAtk * healMult;
-  heals.push({ targetId: 'surtr', healAmt: surtrHeal, tickDelay: 0,
-    grantASPD: true, aspdStrength: s2Active ? 50 : 20 });
-  healed.add('surtr');
+  const target = candidates[0];
+  const stats  = resolveStats({ atk: mon3trOp.baseAtk, aspd: 100 }, mon3trOp.buffs, mon3trOp.baseInterval);
+  const healAmt = stats.atk * healMult;
+  const isRecon = target.id === 'reconstruct';
+  const aspdStrength = s2Active ? 50 : 20;
 
-  let paidBounces = 0;
-  const maxPaid = s2Active ? 2 : 2; // always 2 paid bounces
-  let tickDelay = 1;
-  let currentPos = surtrPos();
+  // Queue this heal to land this tick (ticksRemaining=0 means process in health update step)
+  pendingHeals.push({
+    targetId: target.id, healAmt, ticksRemaining: 0,
+    grantASPD: true, aspdStrength,
+  });
+  excludeIds.add(target.id);
 
-  while (paidBounces < maxPaid && currentPos) {
-    const target = pickBounce(currentPos, healed);
-    if (!target) break;
+  const targetPos = target.id === 'reconstruct' ? reconstructPos()
+                  : target.id === 'surtr'       ? surtrPos()
+                  : gridPlacements[target.id];
 
-    const isRecon  = target.id === 'reconstruct';
-    const healAmt  = rawAtk * healMult; // no reduction through Reconstruction
-    heals.push({ targetId: target.id, healAmt, tickDelay,
-      grantASPD: true, aspdStrength: s2Active ? 50 : 20 });
-    healed.add(target.id);
-    tickDelay++;
-
-    const targetPos = target.id === 'reconstruct' ? reconstructPos()
-                    : target.id === 'surtr'       ? surtrPos()
-                    : gridPlacements[target.id];
-    currentPos = targetPos;
-
-    if (!isRecon) paidBounces++;
-    // Reconstruction grants a free bounce — don't increment paidBounces
-  }
-
-  return heals;
-}
-
-// S2 echo chain: starts from Reconstruction, 3 paid bounces
-function resolveMon3trEchoChain(mon3trSim, simOps, healMult) {
-  const heals = [];
-  const healed = new Set();
-  const stats  = resolveStats({ atk: mon3trSim.baseAtk, aspd: 100 }, mon3trSim.buffs, mon3trSim.baseInterval);
-  const rawAtk = stats.atk;
-
-  const rPos = reconstructPos();
-  if (!rPos) return heals;
-
-  // Echo always starts at Reconstruction
-  const reconOp = simOps.find(o => o.id === 'reconstruct');
-  if (reconOp) {
-    heals.push({ targetId: 'reconstruct', healAmt: rawAtk * healMult, tickDelay: 0,
-      grantASPD: true, aspdStrength: 50 });
-    healed.add('reconstruct');
-  }
-
-  function pickBounce(fromPos) {
-    if (!fromPos) return null;
-    const adj = adjacent8(fromPos);
-    const candidates = [];
-    for (const p of adj) {
-      for (const op of simOps) {
-        const opPos = op.id === 'reconstruct' ? reconstructPos()
-                    : op.id === 'surtr'       ? surtrPos()
-                    : gridPlacements[op.id];
-        if (!opPos) continue;
-        if (opPos.row === p.row && opPos.col === p.col && !healed.has(op.id))
-          candidates.push(op);
-      }
-    }
-    if (!candidates.length) return null;
-    candidates.sort((a, b) => {
-      const hpA = a.hp / a.maxHP, hpB = b.hp / b.maxHP;
-      if (Math.abs(hpA - hpB) > 0.001) return hpA - hpB;
-      const iA = deployOrder.indexOf(String(a.id)), iB = deployOrder.indexOf(String(b.id));
-      return iB - iA;
-    });
-    return candidates[0];
-  }
-
-  let paidBounces = 0;
-  let tickDelay = 1;
-  let currentPos = rPos;
-
-  while (paidBounces < 3 && currentPos) {
-    const target = pickBounce(currentPos);
-    if (!target) break;
-    const isRecon = target.id === 'reconstruct';
-    heals.push({ targetId: target.id, healAmt: rawAtk * healMult, tickDelay,
-      grantASPD: true, aspdStrength: 50 });
-    healed.add(target.id);
-    tickDelay++;
-    const targetPos = target.id === 'reconstruct' ? reconstructPos()
-                    : target.id === 'surtr'       ? surtrPos()
-                    : gridPlacements[target.id];
-    currentPos = targetPos;
-    if (!isRecon) paidBounces++;
-  }
-
-  return heals;
+  // Reconstruction gives a free bounce (doesn't consume bouncesLeft)
+  fireChain(mon3trOp, simOps, s2Active, healMult, targetPos,
+    isRecon ? bouncesLeft : bouncesLeft - 1, excludeIds, pendingHeals, tick);
 }
 
 // ═══════════════════════════════════════════════════════════
 //  MAIN SIMULATION LOOP
 // ═══════════════════════════════════════════════════════════
 function runSim() {
-  // Validate: Surtr must be on grid
   if (!surtrPos()) {
     alert('Place Surtr on the grid before running the simulation.');
     return;
@@ -1169,77 +1045,92 @@ function runSim() {
 
   const simOps   = buildSimOperators();
   const surtrSim = simOps.find(o => o.id === 'surtr');
+  const reconSim = simOps.find(o => o.id === 'reconstruct');
   const healMult = getHealMultiplier();
+  const maxHP    = surtrSim.maxHP;
 
-  // Pending delayed heals: { targetId, healAmt, ticksRemaining, grantASPD, aspdStrength }
+  // Pending heals: { targetId, healAmt, ticksRemaining, grantASPD, aspdStrength }
+  // ticksRemaining=0 means apply this tick's health update step
   let pendingHeals = [];
 
-  const DT_S = DT;
-  const WINDOW_TICKS    = Math.round(1.0 / DT_S);
-  const WINDOW_S2_TICKS = Math.round(4.0 / DT_S);
+  // Mon3tr S2 state (tracked at loop level for trigger logic)
+  let mon3trS2Active = false;
+
+  // Rolling 6s HPS buffer (180 ticks)
+  const HEAL_WINDOW = 180;
+  const healBuf = new Float64Array(HEAL_WINDOW);
+  let healBufIdx = 0, healBufSum = 0;
+
+  const hpSnap = [], drainSnap = [], healSnap = [];
+  let totalHeal = 0, lateHeal = 0;
+  const replayEvents = [];
+  let belowHalfStart = null;
+
+  // Mon3tr S2 trigger: Surtr below 50% for >=2 of last 4s, Warfarin has 0 charges
+  const WINDOW_S2_TICKS = 120; // 4s * 30 TPS
   const lowTicks = new Uint8Array(WINDOW_S2_TICKS);
   let lowIdx = 0, lowSum = 0;
 
-  let t = 0, tick = 0;
   let immortalUsed = false, immortalStart = null, lifetime = null;
+  let tick = 0;
 
-  const tickHeals = [];
-  let nextSnap = 0;
-  const hpSnap = [], drainSnap = [], healSnap = [];
-  let totalHeal = 0;
-  const replayEvents = [];
-  let belowHalfStart = null;
-  const belowHalfPeriods = [];
+  while (tick <= MAX_T * TICKS_PER_S && lifetime === null) {
+    const t = tick / TICKS_PER_S;
 
-  // Warfarin S1 trigger check
-  const warfarinSim = simOps.find(o => o.opKey === 'warfarin');
-  const mon3trSim   = simOps.find(o => o.opKey === 'mon3tr');
+    // Snapshot HP at start of tick (last tick's end state) for targeting checks
+    const surtrHPSnap = surtrSim.hp;
+    const belowHalf   = surtrHPSnap / maxHP < 0.5 && surtrHPSnap > 0;
+    const belowFull   = surtrHPSnap < maxHP;
 
-  // Mon3tr S2 SP tracking
-  let mon3trS2Active = false;
-  let mon3trS2Timer  = 0; // ticks remaining
-
-  while (t <= MAX_T && lifetime === null) {
-    const surtrHP  = surtrSim.hp;
-    const maxHP    = surtrSim.maxHP;
-    const drainPS  = Math.min(t / 60, 1) * 0.20 * maxHP;
-    const belowHalf = surtrHP / maxHP < 0.5 && surtrHP > 0;
-
-    // Rolling window for Mon3tr S2 trigger
-    const newVal = belowHalf ? 1 : 0;
-    lowSum += newVal - lowTicks[lowIdx];
-    lowTicks[lowIdx] = newVal;
+    // Update S2 trigger window
+    lowSum += (belowHalf ? 1 : 0) - lowTicks[lowIdx];
+    lowTicks[lowIdx] = belowHalf ? 1 : 0;
     lowIdx = (lowIdx + 1) % WINDOW_S2_TICKS;
-    const lowTimeSec = lowSum * DT_S;
+    const lowTimeSec = lowSum / TICKS_PER_S;
 
-    const wfCharges = (warfarinSim && warfarinSim.s1Active)
+    const warfarinSim = simOps.find(o => o.role === 'warfarin');
+    const mon3trSim   = simOps.find(o => o.role === 'mon3tr');
+    const wfCharges   = (warfarinSim && warfarinSim.s1Active)
       ? Math.floor(warfarinSim.sp / warfarinSim.spCost) : 999;
-    const triggerMon3trS2 = !immortalUsed && belowHalf && lowTimeSec >= 2.0 && wfCharges === 0;
+    const canTriggerS2 = !immortalUsed && belowHalf && lowTimeSec >= 2.0 && wfCharges === 0;
 
-    // ── Tick all operator buffs ───────────────────────────
+    // ── STEP 1: Deplete attack cooldowns ─────────────────
     for (const op of simOps) {
-      if (op.role === 'haruka') {
-        // Advance phase
-        if (op.phase < 3) {
-          op.phaseTimer += DT_S;
-          while (op.phase < 3 && op.phaseTimer >= op.PHASE_DUR[op.phase]) {
-            op.phaseTimer -= op.PHASE_DUR[op.phase];
-            op.phase++;
-            if (op.phase === 3) {
-              op.s2Active = true;
-              op.buffs.push(makeBuff({ type: 'haruka_s2', source: 'haruka',
-                mods: [{ stat: 'atk', kind: 'ratio', value: 0.40 }],
-                expiry: { condition: 'never' } })); // infinite once 2nd cast
-              replayEvents.push({ t: +t.toFixed(3), type: 'haruka_s2_active' });
-            }
+      if (op.attackCooldown > 0) {
+        op.attackCooldown = Math.max(0, op.attackCooldown - DT);
+      }
+    }
+
+    // ── STEP 2-7: Target check, attack, SP, buffs, heals ─
+    // Process pending heals from previous ticks first (ticksRemaining > 0)
+    // These are Mon3tr chain heals queued last tick — but since we now resolve chains
+    // inline same tick, pendingHeals should only ever have ticksRemaining=0 items
+    // queued during this tick's chain resolution below.
+    // We process them all in step 8. Just decrement timers > 0 here.
+    for (const ph of pendingHeals) {
+      if (ph.ticksRemaining > 0) ph.ticksRemaining--;
+    }
+
+    for (const op of simOps) {
+      if (op.id === 'surtr' || op.id === 'reconstruct' || op.role === 'vendela') continue;
+
+      // ── STEP 1b: Time-based SP timer (non-offensive-recovery operators) ──
+      if (op.role !== 'warfarin' && op.role !== 'mon3tr') {
+        // Timer pauses when SP full or skill permanently active
+        const timerPaused = (op.sp >= op.spMax)
+                         || (op.role === 'lumen'  && op.s3Active)
+                         || (op.role === 'haruka' && op.castState === 2)
+                         || (op.role === 'haruka' && op.castState === 1); // paused during 1st cast
+        if (!timerPaused) {
+          op.spTimer++;
+          if (op.spTimer >= 30) {
+            op.spTimer = 0;
+            if (op.sp < op.spMax) op.sp++;
           }
         }
-      }
-
-      if (op.role === 'lumen' && op.hasS3 && !op.s3Active) {
-        op.windupTicks--;
-        if (op.windupTicks <= 0) {
-          op.s3Active = true;
+        // Auto-activate AFK skills when SP full
+        if (op.role === 'lumen' && op.hasS3 && op.sp >= op.spCost && !op.s3Active) {
+          op.s3Active = true; op.sp = 0; op.spTimer = 0;
           op.buffs.push(makeBuff({ type: 'lumen_s3', source: 'lumen',
             mods: [
               { stat: 'atk',  kind: 'ratio', value: 0.55 },
@@ -1248,222 +1139,283 @@ function runSim() {
             expiry: { condition: 'never' } }));
           replayEvents.push({ t: +t.toFixed(3), type: 'lumen_s3_active' });
         }
-      }
-
-      if (op.role === 'mon3tr') {
-        if (mon3trS2Active) {
-          mon3trS2Timer--;
-          if (mon3trS2Timer <= 0) {
-            mon3trS2Active = false; op.s2Active = false;
-            // S2 ASPD buff on mon3tr itself expires with skill
+        if (op.role === 'haruka' && op.hasS2 && op.sp >= op.spCost) {
+          if (op.castsDone === 0) {
+            // Fire 1st cast
+            op.sp = 0; op.spTimer = 0; op.castsDone = 1;
+            op.castState = 1; op.castTimer = 780; // 26s * 30 ticks
+            replayEvents.push({ t: +t.toFixed(3), type: 'haruka_s1_cast' });
+          } else if (op.castsDone === 1 && op.castState === 0) {
+            // Fire 2nd cast (permanent)
+            op.sp = 0; op.spTimer = 0; op.castsDone = 2;
+            op.castState = 2;
+            op.buffs.push(makeBuff({ type: 'haruka_s2', source: 'haruka',
+              mods: [{ stat: 'atk', kind: 'ratio', value: 0.40 }],
+              expiry: { condition: 'never' } }));
+            replayEvents.push({ t: +t.toFixed(3), type: 'haruka_s2_active' });
+          }
+        }
+        // Haruka 1st cast countdown
+        if (op.role === 'haruka' && op.castState === 1) {
+          op.castTimer--;
+          if (op.castTimer <= 0) {
+            op.castState = 0; // 1st cast ended, start earning SP for 2nd
+            op.sp = 0; op.spTimer = 0;
           }
         }
       }
 
-      // Tick buff timers
-      const skillActive = (op.role === 'haruka' && op.s2Active)
-                       || (op.role === 'lumen'  && op.s3Active)
-                       || (op.role === 'mon3tr' && mon3trS2Active);
-      op.buffs = tickBuffs(op.buffs, DT_S, skillActive);
-    }
-
-    // ── Process pending delayed heals ────────────────────
-    let tickHealTotal = 0;
-    const stillPending = [];
-    for (const ph of pendingHeals) {
-      ph.ticksRemaining--;
-      if (ph.ticksRemaining <= 0) {
-        const target = simOps.find(o => o.id === ph.targetId);
-        if (target) {
-          const before = target.hp;
-          target.hp = Math.min(target.maxHP, target.hp + ph.healAmt);
-          if (target.id === 'surtr') tickHealTotal += (target.hp - before);
-
-          // Grant ASPD buff
-          if (ph.grantASPD) {
-            const strength = ph.aspdStrength;
-            const type = strength === 50 ? 'mon3tr_aspd_s2' : 'mon3tr_aspd';
-            // Refresh: remove existing buff of same type, add new one
-            target.buffs = target.buffs.filter(b => b.type !== type);
-            target.buffs.push(makeBuff({ type, source: 'mon3tr',
-              mods: [{
-                stat: 'aspd', kind: 'ratio', value: strength,
-                suppressedBy: strength === 20 ? 'mon3tr_aspd_s2' : undefined,
-              }],
-              expiry: { condition: 'ticks', remaining: 300 } }));
-          }
-        }
-      } else {
-        stillPending.push(ph);
-      }
-    }
-    pendingHeals = stillPending;
-
-    // ── Each operator's attack tick ───────────────────────
-    for (const op of simOps) {
-      if (op.id === 'surtr' || op.id === 'reconstruct') continue;
-      const stats = resolveStats({ atk: op.baseAtk, aspd: 100 }, op.buffs, op.baseInterval);
-
-      // Nearl: time-based SP even when no attack
+      // ── STEP 2: Check attack cooldown and target ──────────
+      if (op.attackCooldown > 0) continue;
       if (op.role === 'nearl') {
-        if (op.sp < op.spMax) op.sp = Math.min(op.spMax, op.sp + DT_S);
-        // Fire charges if Surtr below 50%
+        // Nearl attacks enemies, not allies; S1 fires on SP threshold, not attack timer
         if (op.s1Active) {
-          while (belowHalf && op.sp >= op.spCost) {
+          while (surtrHPSnap < maxHP && op.sp >= op.spCost) {
             op.sp -= op.spCost;
+            op.spTimer = 0;
             const heal = 467 * 1.50 * healMult;
-            surtrSim.hp = Math.min(maxHP, surtrSim.hp + heal);
-            tickHealTotal += heal;
+            pendingHeals.push({ targetId: 'surtr', healAmt: heal, ticksRemaining: 0,
+              grantASPD: false, aspdStrength: 0 });
             op.procCount++;
           }
         }
         continue;
       }
-      if (op.role === 'vendela') continue;
-      if (stats.interval === Infinity) continue;
 
-      op.attackTimer += DT_S;
-      while (op.attackTimer >= stats.interval) {
-        op.attackTimer -= stats.interval;
+      // Valid target check: Surtr below 100% HP for all; Reconstruction also valid for Mon3tr
+      let target = null;
+      if (op.role === 'mon3tr') {
+        const reconOk = reconSim && reconSim.hp < reconSim.maxHP;
+        // During S2: prioritize Reconstruction; otherwise prioritize Surtr
+        if (op.s2Active && reconOk) target = reconSim;
+        else if (belowFull) target = surtrSim;
+        else if (reconOk)   target = reconSim;
+      } else {
+        if (belowFull) target = surtrSim;
+      }
+      if (!target) continue;
 
-        if (op.role === 'warfarin') {
-          const below = surtrHP / maxHP < 0.5;
-          const base  = below ? stats.atk * op.modMult : stats.atk;
-          if (op.s1Active && below && op.sp >= op.spCost) {
-            op.sp -= op.spCost;
-            const bonus = op.s1Pct * maxHP;
-            const heal  = (base + bonus) * healMult;
-            surtrSim.hp = Math.min(maxHP, surtrSim.hp + heal);
-            tickHealTotal += heal;
-            op.procCount++; op.totalBonusHP = (op.totalBonusHP||0) + bonus;
-            replayEvents.push({ t: +t.toFixed(3), type: 'wf_s1_proc', hp: +surtrSim.hp.toFixed(2) });
-          } else {
-            // Gain SP on non-proc attacks (offensive recovery)
-            if (op.s1Active && op.sp < op.spMax) op.sp = Math.min(op.spMax, op.sp + 1);
-            // Module: +15% when target below 50% HP applies even without S1 active
-            const healBase = (below && !op.s1Active) ? stats.atk * op.modMult : base;
-            const heal = healBase * healMult;
-            surtrSim.hp = Math.min(maxHP, surtrSim.hp + heal);
-            tickHealTotal += heal;
+      // ── STEP 3: Set attack cooldown ───────────────────────
+      const stats = resolveStats({ atk: op.baseAtk, aspd: 100 }, op.buffs, op.baseInterval);
+      op.attackCooldown = stats.interval;
+
+      // ── STEP 4 & 5: SP (offensive recovery) ──────────────
+      if (op.role === 'warfarin') {
+        const below = surtrHPSnap / maxHP < 0.5;
+        const base  = below ? stats.atk * op.modMult : stats.atk;
+        if (op.s1Active && below && op.sp >= op.spCost) {
+          // Step 4: spend SP
+          op.sp -= op.spCost;
+          const bonus = op.s1Pct * maxHP;
+          const heal  = (base + bonus) * healMult;
+          pendingHeals.push({ targetId: 'surtr', healAmt: heal, ticksRemaining: 0,
+            grantASPD: false, aspdStrength: 0 });
+          op.procCount++; op.totalBonusHP = (op.totalBonusHP||0) + bonus;
+          replayEvents.push({ t: +t.toFixed(3), type: 'wf_s1_proc' });
+        } else {
+          // Step 5: gain SP (offensive recovery, no skill cost paid)
+          if (op.s1Active && op.sp < op.spMax) op.sp = Math.min(op.spMax, op.sp + 1);
+          const healBase = below ? stats.atk * op.modMult : stats.atk;
+          pendingHeals.push({ targetId: 'surtr', healAmt: healBase * healMult, ticksRemaining: 0,
+            grantASPD: false, aspdStrength: 0 });
+        }
+
+      } else if (op.role === 'rose') {
+        const usedCharge = op.hasS1 && op.sp >= op.spCost;
+        if (usedCharge) { op.sp -= op.spCost; op.spTimer = 0; op.procCount++; }
+        const eff  = usedCharge ? stats.atk * op.s1Pct : stats.atk;
+        pendingHeals.push({ targetId: 'surtr', healAmt: eff * 1.17 * healMult, ticksRemaining: 0,
+          grantASPD: false, aspdStrength: 0 });
+
+      } else if (op.role === 'haruka') {
+        // Only heal during cast state 1 (1st cast, no +40%) or 2 (permanent, +40%)
+        if (op.castState !== 1 && op.castState !== 2) continue;
+        const heal = stats.atk * op.healMult * healMult;
+        pendingHeals.push({ targetId: 'surtr', healAmt: heal, ticksRemaining: 0,
+          grantASPD: false, aspdStrength: 0 });
+
+      } else if (op.role === 'lumen') {
+        pendingHeals.push({ targetId: 'surtr', healAmt: stats.atk * healMult, ticksRemaining: 0,
+          grantASPD: false, aspdStrength: 0 });
+
+      } else if (op.role === 'mon3tr') {
+        // Step 4/5: SP (offensive recovery)
+        if (op.isS2 && !op.s2Active) {
+          op.sp = Math.min(op.spMax, op.sp + 1);
+          if (op.sp >= op.spCost && canTriggerS2) {
+            op.sp = 0;
+            op.s2Active = true; mon3trS2Active = true;
+            op.s2Timer = 30 * TICKS_PER_S;
+            op.procCount++;
+            op.buffs.push(makeBuff({ type: 'mon3tr_aspd_s2', source: 'mon3tr',
+              mods: [{ stat: 'aspd', kind: 'ratio', value: 50 }],
+              expiry: { condition: 'ticks', remaining: 300 } }));
+            replayEvents.push({ t: +t.toFixed(3), type: 'mon3tr_s2_activate' });
           }
+        }
 
-        } else if (op.role === 'rose') {
-          // SP is time-based; incremented in the post-loop block below
-          const eff = op.hasS1 && op.sp >= op.spCost
-            ? (() => { op.sp -= op.spCost; op.procCount++; return stats.atk * op.s1Pct; })()
-            : stats.atk;
-          const heal = eff * 1.17 * healMult;
-          surtrSim.hp = Math.min(maxHP, surtrSim.hp + heal);
-          tickHealTotal += heal;
+        // Step 6: Self ASPD buff (from self-heal, refreshed every attack)
+        const aspdStr  = (op.s2Active || mon3trS2Active) ? 50 : 20;
+        const aspdType = aspdStr === 50 ? 'mon3tr_aspd_s2' : 'mon3tr_aspd';
+        op.buffs = op.buffs.filter(b => b.type !== aspdType);
+        op.buffs.push(makeBuff({ type: aspdType, source: 'mon3tr',
+          mods: [{ stat: 'aspd', kind: 'ratio', value: aspdStr,
+            suppressedBy: aspdStr === 20 ? 'mon3tr_aspd_s2' : undefined }],
+          expiry: { condition: 'ticks', remaining: 300 } }));
 
-        } else if (op.role === 'haruka') {
-          if (op.phase !== 1 && op.phase !== 3) continue; // phases 0 and 2: no heals
-          // phase 1: no +40% (no skill buff active yet), phase 3: S2 buff active
-          const heal = stats.atk * op.healMult * healMult;
-          surtrSim.hp = Math.min(maxHP, surtrSim.hp + heal);
-          tickHealTotal += heal;
+        // Step 7: Queue primary heal to target, then fire chain
+        pendingHeals.push({ targetId: target.id, healAmt: stats.atk * healMult,
+          ticksRemaining: 0, grantASPD: true, aspdStrength: aspdStr });
 
-        } else if (op.role === 'lumen') {
-          const heal = stats.atk * healMult;
-          surtrSim.hp = Math.min(maxHP, surtrSim.hp + heal);
-          tickHealTotal += heal;
+        // Step 6: Fire bounce chain from primary target's position
+        const primaryPos = target.id === 'reconstruct' ? reconstructPos() : surtrPos();
+        const excludeIds = new Set([target.id]);
+        fireChain(op, simOps, op.s2Active || mon3trS2Active, healMult,
+          primaryPos, 2, excludeIds, pendingHeals, tick);
 
-        } else if (op.role === 'mon3tr') {
-          // SP and S2 trigger
-          if (op.isS2 && !mon3trS2Active) {
-            if (op.sp < op.spMax) op.sp = Math.min(op.spMax, op.sp + 1);
-            if (op.sp >= op.spCost && triggerMon3trS2) {
-              mon3trS2Active = true;
-              mon3trS2Timer  = op.s2Duration * TICKS_PER_S;
-              op.sp = 0; op.procCount++;
-              // S2 ASPD buff on Mon3tr herself
-              op.buffs = op.buffs.filter(b => b.type !== 'mon3tr_aspd' && b.type !== 'mon3tr_aspd_s2');
-              op.buffs.push(makeBuff({ type: 'mon3tr_aspd_s2', source: 'mon3tr',
-                mods: [{ stat: 'aspd', kind: 'ratio', value: 50 }],
-                expiry: { condition: 'ticks', remaining: 300 } }));
-              replayEvents.push({ t: +t.toFixed(3), type: 'mon3tr_s2_activate' });
-            }
-          }
-
-          // Self ASPD buff (from self-heal, permanent refresh)
-          const selfASPDType = mon3trS2Active ? 'mon3tr_aspd_s2' : 'mon3tr_aspd';
-          const selfStrength = mon3trS2Active ? 50 : 20;
-          op.buffs = op.buffs.filter(b => b.type !== selfASPDType);
-          op.buffs.push(makeBuff({ type: selfASPDType, source: 'mon3tr',
-            mods: [{ stat: 'aspd', kind: 'ratio', value: selfStrength,
-              suppressedBy: selfStrength === 20 ? 'mon3tr_aspd_s2' : undefined }],
-            expiry: { condition: 'ticks', remaining: 300 } }));
-
-          // Resolve bounce chain and queue delayed heals
-          const chain = resolveMon3trChain(op, simOps, mon3trS2Active, healMult);
-          for (const h of chain) pendingHeals.push({ ...h, ticksRemaining: h.tickDelay + 1 });
-
-          // S2 echo: queue the echo chain 0.6s (18 ticks) after the main attack
-          if (mon3trS2Active) {
-            const echoDelay = Math.round(0.6 * TICKS_PER_S);
-            const echoChain = resolveMon3trEchoChain(op, simOps, healMult);
-            for (const h of echoChain)
-              pendingHeals.push({ ...h, ticksRemaining: echoDelay + h.tickDelay + 1 });
+        // S2 echo: if Reconstruction was primary, Surtr gets echo chain 18 ticks later
+        // If Surtr was primary, echo originates from Reconstruction 18 ticks later
+        if (op.s2Active || mon3trS2Active) {
+          const echoOriginPos = target.id === 'reconstruct' ? surtrPos() : reconstructPos();
+          if (echoOriginPos) {
+            // Queue echo chain as a deferred event (18 ticks)
+            // We model this as pending chain-fire: store as special pending entry
+            pendingHeals.push({
+              targetId: '__echo__', healAmt: stats.atk * healMult,
+              ticksRemaining: 18, grantASPD: true, aspdStrength: 50,
+              echoOriginPos, mon3trOp: op,
+            });
           }
         }
       }
-
-      // Rose: time-based SP (separate from attack loop)
-      if (op.role === 'rose' && op.hasS1 && op.sp < op.spMax)
-        op.sp = Math.min(op.spMax, op.sp + DT_S);
     }
 
-    // ── Apply drain ───────────────────────────────────────
-    surtrSim.hp -= drainPS * DT_S;
+    // ── STEP 8: Health updates ────────────────────────────
+    let tickHealTotal = 0;
 
-    // Snap data every 0.25s
-    tickHeals.push(tickHealTotal);
+    // 8a: Discrete drain every 6 ticks
+    if (tick % 6 === 0 && tick > 0) {
+      const drainAmt = Math.min(tick / (60 * TICKS_PER_S), 1) * 0.04 * maxHP;
+      surtrSim.hp -= drainAmt;
+      if (reconSim) reconSim.hp = Math.max(0, reconSim.hp - 40);
+    }
+
+    // 8b: Apply all pending heals with ticksRemaining === 0
+    const stillPending = [];
+    for (const ph of pendingHeals) {
+      if (ph.ticksRemaining > 0) {
+        // Handle echo chain trigger
+        if (ph.targetId === '__echo__' && ph.ticksRemaining === 1) {
+          // Will fire next tick — do nothing special, just decrement below
+        }
+        ph.ticksRemaining--;
+        if (ph.targetId === '__echo__' && ph.ticksRemaining === 0) {
+          // Fire echo chain now
+          const echoExclude = new Set();
+          fireChain(ph.mon3trOp, simOps, true, healMult,
+            ph.echoOriginPos, 3, echoExclude, pendingHeals, tick);
+          // Don't push back — consumed
+          continue;
+        }
+        stillPending.push(ph);
+        continue;
+      }
+      if (ph.targetId === '__echo__') continue; // shouldn't happen but guard
+      const tgt = simOps.find(o => o.id === ph.targetId);
+      if (tgt) {
+        tgt.hp = Math.min(tgt.maxHP, tgt.hp + ph.healAmt);
+        if (tgt.id === 'surtr') tickHealTotal += ph.healAmt;
+        if (ph.grantASPD && ph.aspdStrength > 0) {
+          const type = ph.aspdStrength === 50 ? 'mon3tr_aspd_s2' : 'mon3tr_aspd';
+          tgt.buffs = tgt.buffs.filter(b => b.type !== type);
+          tgt.buffs.push(makeBuff({ type, source: 'mon3tr',
+            mods: [{ stat: 'aspd', kind: 'ratio', value: ph.aspdStrength,
+              suppressedBy: ph.aspdStrength === 20 ? 'mon3tr_aspd_s2' : undefined }],
+            expiry: { condition: 'ticks', remaining: 300 } }));
+        }
+      }
+    }
+    pendingHeals = stillPending;
+
+    // 8c: Immortality clamp
+    if (surtrSim.hp <= 0 && !immortalUsed) {
+      immortalUsed = true; immortalStart = tick;
+      surtrSim.hp = 1;
+      surtrSim.buffs.push(makeBuff({ type: 'surtr_immortal', source: 'surtr',
+        mods: [], // no stat effect; just marks the window
+        expiry: { condition: 'ticks', remaining: 240 } })); // 8s * 30 TPS
+      replayEvents.push({ t: +t.toFixed(3), type: 'immortal_trigger' });
+    }
+    // Clamp HP if immortal buff active
+    const immortalBuff = surtrSim.buffs.find(b => b.type === 'surtr_immortal');
+    if (immortalBuff) surtrSim.hp = Math.max(1, surtrSim.hp);
+
+    // ── STEP 9: Buff expiry ───────────────────────────────
+    for (const op of simOps) {
+      op.buffs = op.buffs.filter(b => {
+        const e = b.expiry;
+        if (e.condition === 'never') return true;
+        if (e.condition === 'ticks') { e.remaining--; return e.remaining > 0; }
+        if (typeof e.remaining === 'number' && e.condition !== 'ticks') {
+          e.remaining -= DT; return e.remaining > 0;
+        }
+        return true;
+      });
+    }
+
+    // Check if immortality expired → retreat
+    if (immortalUsed && !surtrSim.buffs.find(b => b.type === 'surtr_immortal')) {
+      lifetime = t;
+    }
+
+    // Mon3tr S2 duration countdown
+    if (mon3trSim && mon3trSim.s2Active) {
+      mon3trSim.s2Timer--;
+      if (mon3trSim.s2Timer <= 0) {
+        mon3trSim.s2Active = false; mon3trS2Active = false;
+      }
+    }
+
+    // ── Tracking & snapshots ──────────────────────────────
     totalHeal += tickHealTotal;
+    if (t >= 180) lateHeal += tickHealTotal;
 
-    const windowSum = tickHeals.slice(Math.max(0, tickHeals.length - WINDOW_TICKS)).reduce((a,b)=>a+b,0);
-    const smoothHPS = windowSum / 1.0;
+    healBufSum -= healBuf[healBufIdx];
+    healBuf[healBufIdx] = tickHealTotal;
+    healBufSum += tickHealTotal;
+    healBufIdx = (healBufIdx + 1) % HEAL_WINDOW;
 
-    if (t >= nextSnap) {
-      hpSnap.push([+t.toFixed(2), surtrSim.hp]);
-      drainSnap.push([+t.toFixed(2), drainPS]);
-      healSnap.push([+t.toFixed(2), smoothHPS]);
-      nextSnap += 0.25;
+    // Snap every 6 ticks (aligned with drain events)
+    if (tick % 6 === 0) {
+      hpSnap.push([+t.toFixed(3), surtrSim.hp]);
+      drainSnap.push([+t.toFixed(3), Math.min(tick / (60 * TICKS_PER_S), 1) * 0.20 * maxHP]);
+      healSnap.push([+t.toFixed(3), healBufSum / 6.0]);
     }
 
     // Below-half tracking
     const nowBelow = surtrSim.hp / maxHP < 0.5 && surtrSim.hp > 0;
     if (belowHalfStart === null && nowBelow) belowHalfStart = t;
     else if (belowHalfStart !== null && !nowBelow) {
-      belowHalfPeriods.push({ start: +belowHalfStart.toFixed(3), end: +t.toFixed(3) });
       belowHalfStart = null;
     }
 
-    // Death / immortality
-    if (surtrSim.hp <= 0 && !immortalUsed) {
-      immortalUsed = true; immortalStart = t; surtrSim.hp = 1;
-      replayEvents.push({ t: +t.toFixed(3), type: 'immortal_trigger' });
-    }
-    if (immortalStart !== null && t >= immortalStart + 8) lifetime = t;
-
-    t  += DT_S;
     tick++;
   }
 
   if (lifetime === null) lifetime = MAX_T;
-  if (belowHalfStart !== null)
-    belowHalfPeriods.push({ start: +belowHalfStart.toFixed(3), end: +lifetime.toFixed(3) });
 
-  const avgHPS    = totalHeal / lifetime;
-  const peakDrain = 0.20 * surtrSim.maxHP;
+  const avgHPS     = totalHeal / lifetime;
+  const lateAvgHPS = lateHeal / Math.min(120, Math.max(lifetime - 180, 0.001));
+  const peakDrain  = 0.20 * maxHP;
   const surtrStats = resolveStats({ atk: 777, aspd: 100 },
-    buildSimOperators().find(o=>o.id==='surtr')?.buffs ?? [], 1.27);
+    buildSimOperators().find(o => o.id === 'surtr')?.buffs ?? [], 1.27);
 
   displayResults({
-    lifetime, maxHP: surtrSim.maxHP, peakDrain, avgHPS,
+    lifetime, maxHP, peakDrain, avgHPS, lateAvgHPS,
     surtrASPD: surtrStats.aspd, atkInterval: surtrStats.interval,
     dps: 777 * (document.getElementById('surtr-m3').checked ? 4.30 : 3.40) / surtrStats.interval,
-    hpSnap, drainSnap, healSnap, immortalStart, healMult,
-    simOps, replayEvents,
+    hpSnap, drainSnap, healSnap, immortalStart: immortalStart ? immortalStart / TICKS_PER_S : null,
+    healMult, simOps, replayEvents,
   });
 }
 
@@ -1473,7 +1425,7 @@ function runSim() {
 function displayResults(d) {
   document.getElementById('results').style.display = 'block';
   const lifetimeStr = d.lifetime >= 300 ? '>5 min' : d.lifetime.toFixed(1)+'s';
-  const sustainable = d.avgHPS >= d.peakDrain;
+  const sustainable = d.lateAvgHPS >= d.peakDrain;
 
   let extra = '';
   if (d.healMult > 1.001)
@@ -1514,7 +1466,7 @@ function displayResults(d) {
       datasets: [
         { label:'Surtr HP',   data:d.hpSnap.map(p=>p[1]),    borderColor:'#185fa5', backgroundColor:'rgba(24,95,165,0.08)', fill:true,  tension:0.3, pointRadius:0, borderWidth:2,   yAxisID:'y'  },
         { label:'Drain HP/s', data:d.drainSnap.map(p=>p[1]), borderColor:'#a32d2d', backgroundColor:'transparent',          fill:false, tension:0.1, pointRadius:0, borderWidth:1.5, borderDash:[5,3], yAxisID:'y2' },
-        { label:'Heal HP/s',  data:d.healSnap.map(p=>p[1]),  borderColor:'#0f6e56', backgroundColor:'transparent',          fill:false, tension:0.3, pointRadius:0, borderWidth:1.5, yAxisID:'y2' },
+        { label:'Average Healing per second over last 6 seconds', data:d.healSnap.map(p=>p[1]), borderColor:'#0f6e56', backgroundColor:'transparent', fill:false, tension:0.3, pointRadius:0, borderWidth:1.5, yAxisID:'y2' },
       ]
     },
     options: {
@@ -1522,7 +1474,7 @@ function displayResults(d) {
       interaction:{ mode:'index', intersect:false },
       plugins:{ legend:{ display:false }, tooltip:{ callbacks:{ label: ctx => `${ctx.dataset.label}: ${Math.round(ctx.parsed.y)}` }}},
       scales: {
-        x:  { ticks:{ maxTicksLimit:15, autoSkip:true }, title:{ display:true, text:'time (s)' }},
+        x:  { ticks:{ maxTicksLimit:10, autoSkip:true }, title:{ display:true, text:'time (s)' }},
         y:  { position:'left',  min:0, max:d.maxHP*1.05, title:{ display:true, text:'HP' }},
         y2: { position:'right', min:0, title:{ display:true, text:'HP/s' }, grid:{ drawOnChartArea:false }},
       }
