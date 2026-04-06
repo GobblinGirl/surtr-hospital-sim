@@ -134,7 +134,6 @@ select {
 }
 .grid-cell.drag-over { background: rgba(24,95,165,0.18); }
 .grid-cell.highlight-aura   { background: rgba(15,110,86,0.13); }
-.grid-cell.highlight-adj    { background: rgba(163,45,45,0.10); }
 
 /* operator tokens on grid */
 .op-token {
@@ -235,7 +234,6 @@ select {
 
   <div class="grid-legend">
     <span><span class="swatch-box" style="background:rgba(15,110,86,0.25);border:1px solid rgba(15,110,86,0.4);"></span>Reconstruction aura (+15% ATK)</span>
-    <span><span class="swatch-box" style="background:rgba(163,45,45,0.18);border:1px solid rgba(163,45,45,0.3);"></span>Adjacent to Surtr (Nearl S1 range)</span>
   </div>
 
   <div style="margin-top:8px;">
@@ -257,15 +255,18 @@ select {
 </div>
 
 <div class="card notes">
-  <strong>Model assumptions:</strong>
-  Surtr's S3 HP drain is modeled as a linear ramp from 0% to 20% max HP/s over 60 seconds.
-  Bubble heals from Haruka's Talent 2 are excluded (enemy-speed-dependent).
-  Warfarin S1 SP from enemy deaths excluded.
-  Mon3tr bounce chain resolves each attack using current HP ratios and grid positions; 1-tick delay between bounces.
-  Nearl S1 auto-enabled when adjacent to Surtr on grid.
-  Reconstruction aura (+15% ATK multiplier) auto-applied to operators within 8 surrounding tiles of the Reconstruction token.
-  Nearl passive (+10% heal received) and Vendela passive (+20% heal received to highest-HP ally) stack multiplicatively.
-  Health tracked as floats. Timestep: 1/30s.
+  <strong>Simulation assumptions and known inaccuracies:</strong>
+  Enemies, incoming damage, and crowd control are not simulated — this models survival against Surtr's self-drain only.
+  Operator attack ranges are not modeled; placement on the grid is used only for adjacency checks (Mon3tr bounce chain, Reconstruction aura).
+  Projectile travel time and attack windup animations are not simulated; heals are treated as instantaneous on the tick an attack fires.
+  Surtr's S3 HP drain is modeled as a discrete event every 6 ticks (0.2s), ramping linearly from 0 to 4% max HP per event over 60 seconds.
+  The Reconstruction's 80 HP/s drain is applied as a discrete 16 HP event every 6 ticks (80 / 5 events per second); it cannot die within the simulation window.
+  Haruka's Talent 2 bubble heals are excluded — they depend on enemy attack timing.
+  Warfarin's SP gain from enemy deaths (Talent) is excluded.
+  Mon3tr's bounce chain is resolved within the same tick as her attack, using HP values from the start of that tick for targeting.
+  Nearl's S1 is enabled automatically when she is placed adjacent to Surtr on the grid (within 8 surrounding tiles).
+  Nearl and Vendela's healing-received passives apply multiplicatively and only when deployed on the grid.
+  The Reconstruction aura (+15% ATK, applied as a multiplier after ratio buffs) is auto-applied to operators within its surrounding 8 tiles.
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
@@ -417,6 +418,19 @@ function tokenAtPos(pos) {
 let buffUidCounter = 0;
 function makeBuff({ type, source, mods, expiry }) {
   return { uid: ++buffUidCounter, type, source, mods, expiry: { ...expiry } };
+}
+
+// Resolve effective ATK only (no ASPD/interval needed for chain heal amounts).
+function resolveAtk(baseAtk, buffs) {
+  let atkRatio = 0, atkMult = 1;
+  for (const b of buffs) {
+    for (const m of b.mods) {
+      if (m.stat !== 'atk') continue;
+      if (m.kind === 'ratio') atkRatio += m.value;
+      if (m.kind === 'mult')  atkMult  *= (1 + m.value);
+    }
+  }
+  return baseAtk * (1 + atkRatio) * atkMult;
 }
 
 // Resolve effective ATK and ASPD for an operator given their base stats and buff list.
@@ -606,12 +620,6 @@ function renderGrid() {
     });
   }
   // Highlight adjacency to Surtr
-  if (sPos) {
-    adjacent8(sPos).forEach(p => {
-      const td = getCell(p.row, p.col);
-      if (td && !td.classList.contains('highlight-aura')) td.classList.add('highlight-adj');
-    });
-  }
 
   // Place Surtr token
   if (sPos) placeTokenEl('surtr', sPos);
@@ -857,7 +865,6 @@ function buildSimOperators() {
       baseAtk: 0, baseInterval: Infinity,
       buffs: [], attackCooldown: 0,
       role: 'reconstruct',
-      drainPerS: 80,
     });
   }
 
@@ -981,7 +988,7 @@ function getHealMultiplier() {
 // ═══════════════════════════════════════════════════════════
 //  MON3TR CHAIN RESOLUTION (inline, same tick)
 //  Fires chain bounces as "summon attacks" during step 2/6.
-//  Returns total heal to Surtr from all bounces.
+//  Queues heals for all targets hit; only heals landing on Surtr count toward tickHealTotal.
 //  Grants ASPD buffs to all targets hit.
 // ═══════════════════════════════════════════════════════════
 function fireChain(mon3trOp, simOps, s2Active, healMult, startPos, bouncesLeft, excludeIds, pendingHeals, tick) {
@@ -1013,8 +1020,7 @@ function fireChain(mon3trOp, simOps, s2Active, healMult, startPos, bouncesLeft, 
   });
 
   const target = candidates[0];
-  const stats  = resolveStats({ atk: mon3trOp.baseAtk, aspd: 100 }, mon3trOp.buffs, mon3trOp.baseInterval);
-  const healAmt = stats.atk * healMult;
+  const healAmt = resolveAtk(mon3trOp.baseAtk, mon3trOp.buffs) * healMult;
   const isRecon = target.id === 'reconstruct';
   const aspdStrength = s2Active ? 50 : 20;
 
@@ -1264,7 +1270,8 @@ function runSim() {
           expiry: { condition: 'ticks', remaining: 300 } }));
 
         // Step 7: Queue primary heal to target, then fire chain
-        pendingHeals.push({ targetId: target.id, healAmt: stats.atk * healMult,
+        const mon3trAtk = resolveAtk(op.baseAtk, op.buffs);
+        pendingHeals.push({ targetId: target.id, healAmt: mon3trAtk * healMult,
           ticksRemaining: 0, grantASPD: true, aspdStrength: aspdStr });
 
         // Step 6: Fire bounce chain from primary target's position
@@ -1273,15 +1280,14 @@ function runSim() {
         fireChain(op, simOps, op.s2Active || mon3trS2Active, healMult,
           primaryPos, 2, excludeIds, pendingHeals, tick);
 
-        // S2 echo: if Reconstruction was primary, Surtr gets echo chain 18 ticks later
-        // If Surtr was primary, echo originates from Reconstruction 18 ticks later
+        // S2 echo: the Reconstruction fires its own attack 18 ticks later.
+        // It targets itself first (step 6 of that tick), then bounces up to 3 paid bounces.
+        // Uses Mon3tr's ATK stats but doesn't affect her cooldown or SP.
         if (op.s2Active || mon3trS2Active) {
-          const echoOriginPos = target.id === 'reconstruct' ? surtrPos() : reconstructPos();
+          const echoOriginPos = reconstructPos();
           if (echoOriginPos) {
-            // Queue echo chain as a deferred event (18 ticks)
-            // We model this as pending chain-fire: store as special pending entry
             pendingHeals.push({
-              targetId: '__echo__', healAmt: stats.atk * healMult,
+              targetId: '__echo__', healAmt: 0, // amount unused; fireChain computes it
               ticksRemaining: 18, grantASPD: true, aspdStrength: 50,
               echoOriginPos, mon3trOp: op,
             });
@@ -1297,7 +1303,7 @@ function runSim() {
     if (tick % 6 === 0 && tick > 0) {
       const drainAmt = Math.min(tick / (60 * TICKS_PER_S), 1) * 0.04 * maxHP;
       surtrSim.hp -= drainAmt;
-      if (reconSim) reconSim.hp = Math.max(0, reconSim.hp - 40);
+      if (reconSim) reconSim.hp = Math.max(0, reconSim.hp - 16); // 80 HP/s / 5 events per second
     }
 
     // 8b: Apply all pending heals with ticksRemaining === 0
@@ -1310,10 +1316,20 @@ function runSim() {
         }
         ph.ticksRemaining--;
         if (ph.targetId === '__echo__' && ph.ticksRemaining === 0) {
-          // Fire echo chain now
-          const echoExclude = new Set();
-          fireChain(ph.mon3trOp, simOps, true, healMult,
-            ph.echoOriginPos, 3, echoExclude, pendingHeals, tick);
+          // Reconstruction fires its own attack, targeting itself first.
+          // Queue the Reconstruction's self-heal, then 3 paid bounces from its position.
+          const reconOp = simOps.find(o => o.id === 'reconstruct');
+          if (reconOp) {
+            const echoHeal = resolveAtk(ph.mon3trOp.baseAtk, ph.mon3trOp.buffs) * healMult;
+            pendingHeals.push({
+              targetId: 'reconstruct', healAmt: echoHeal, ticksRemaining: 0,
+              grantASPD: true, aspdStrength: 50,
+            });
+            // 3 paid bounces from Reconstruction's position, excluding itself
+            const echoExclude = new Set(['reconstruct']);
+            fireChain(ph.mon3trOp, simOps, true, healMult,
+              ph.echoOriginPos, 3, echoExclude, pendingHeals, tick);
+          }
           // Don't push back — consumed
           continue;
         }
